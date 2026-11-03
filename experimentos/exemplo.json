@@ -1,0 +1,16 @@
+{
+  "nome": "exemplo-estrategias",
+  "comentario": "Compara as quatro estrategias de recuperacao em tres perguntas. Serve para conferir que o instrumento funciona -- nao e o experimento da Fase 2, que precisa do conjunto de perguntas rotulado.",
+  "repeticoes": 1,
+  "condicoes": [
+    {"nome": "traduzida", "recuperacao": "traduzida", "k": 9},
+    {"nome": "crua", "recuperacao": "crua", "k": 9},
+    {"nome": "hyde", "recuperacao": "hyde", "k": 9},
+    {"nome": "sem-rag", "recuperacao": "nenhuma", "k": 0}
+  ],
+  "perguntas": [
+    "Quero comparar as vendas de 5 categorias de produto",
+    "Preciso ver se ha relacao entre horas de estudo e nota da prova",
+    "Qual a cor da capa do meu relatorio?"
+  ]
+}

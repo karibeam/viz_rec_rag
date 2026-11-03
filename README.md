@@ -97,6 +97,7 @@ A tela segue as heurísticas de usabilidade de Nielsen, sem enfeites:
 src/
   cache.py          respostas do LLM e vetores guardados em disco
   condicao.py       o que pode variar num experimento (estratégia, k, modelo)
+  diario.py         grava cada execução: prompts, achados, resultado, ambiente
   config.py         chave de API, modelos, nova tentativa em caso de erro temporário
   indexar.py        etapa offline: base → documentos → embeddings → Chroma
   recomendar.py     etapa online: traduzir → buscar → gerar
@@ -104,6 +105,9 @@ src/
                     categorias ordenadas, como meses, mantêm a ordem dos dados)
 app.py              interface (Streamlit)
 mostrar_traducao.py log passo a passo da tradução (para documentar o sistema)
+experimentos/
+  rodar.py          executa condições × perguntas × repetições
+  exemplo.json      um experimento descrito em JSON, não em código
 docs/pipeline.svg   diagrama do pipeline
 docs/historico/     plano da v1, superado — documenta por que a v2 é assim
 .streamlit/         tema da interface (cor principal, barra de ferramentas mínima)
@@ -207,6 +211,39 @@ estaria errado sem dar nenhum sinal.
 Os vetores também são guardados, separados por papel: o provedor vetoriza
 consulta e documento com `task_type` diferente, então o mesmo texto tem dois
 vetores distintos e trocá-los muda os achados recuperados.
+
+## Rodar um experimento
+
+O experimento é um arquivo JSON, não código — é isso que permite re-rodar o
+mesmo experimento meses depois e dizer na dissertação exatamente o que foi
+rodado.
+
+```bash
+.venv/bin/python experimentos/rodar.py experimentos/exemplo.json
+```
+
+```bash
+.venv/bin/python experimentos/rodar.py experimentos/exemplo.json --repeticoes 10
+```
+
+Cada execução grava uma pasta em `runs/<nome do experimento>/`:
+
+```
+ambiente.json   Python, commit do código (e se a árvore estava suja), modelos
+condicao.json   os parâmetros usados
+pergunta.txt    a pergunta, como ela veio
+chamadas/       prompt e resposta de CADA chamada ao modelo, em ordem
+achados.json    os achados recuperados, com similaridade e fonte
+resultado.json  o resultado inteiro
+```
+
+E o resumo de todas vai em `runs/<nome>/resumo.jsonl`, uma linha por execução.
+Uma falha isolada não derruba o experimento: ela entra no resumo como `erro` e
+a execução seguinte continua.
+
+`ambiente.json` registra se havia alteração não commitada no momento da
+execução. Um resultado produzido com a árvore suja não é reproduzível a partir
+do commit, e o diário diz isso em vez de deixar parecer que é.
 
 ## Testes
 
