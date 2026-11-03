@@ -18,7 +18,9 @@ from comum import caminho_src, confere
 
 caminho_src()
 
+import condicao
 import indexar
+import recomendar
 import validate_spec
 
 BARRAS = {
@@ -28,6 +30,20 @@ BARRAS = {
     "encoding": {"x": {"field": "categoria", "type": "nominal"},
                  "y": {"field": "vendas", "type": "quantitative"}},
 }
+
+
+def erro(funcao, excecao, *args, **kwargs):
+    """True se chamar `funcao` levantar `excecao`."""
+    try:
+        funcao(*args, **kwargs)
+    except excecao:
+        return True
+    return False
+
+
+def trocar_k():
+    """Tentar mudar uma Condicao depois de criada (ela e congelada)."""
+    condicao.PADRAO.k = 15
 
 
 def spec_barras(**mudancas):
@@ -173,5 +189,53 @@ confere("os designs comparados sao descritos", linhas[6] == "designs compared:" 
 
 confere("significancia como lista vazia -> 'not reported'",
         "statistically significant differences: not reported" in docs[1].page_content)
+
+# --- condicao: o que pode variar num experimento ----------------------------
+
+print("11) Condicao: valida os parametros e se identifica")
+confere("a condicao PADRAO e o sistema como ele e",
+        (condicao.PADRAO.recuperacao, condicao.PADRAO.k) == ("traduzida", 9))
+confere("estrategia inexistente e recusada na criacao",
+        erro(condicao.Condicao, ValueError, recuperacao="magica"))
+confere("k abaixo de 1 e recusado", erro(condicao.Condicao, ValueError, k=0))
+confere("k=0 e aceito quando nao se recupera nada",
+        condicao.Condicao(recuperacao="nenhuma", k=0).k == 0)
+confere("a condicao e imutavel", erro(trocar_k, Exception))
+
+print("12) Condicao.identidade: mesmos parametros, mesma identidade")
+confere("o rotulo nao entra na identidade",
+        condicao.Condicao(nome="a").identidade() == condicao.Condicao(nome="b").identidade())
+confere("k diferente -> identidade diferente",
+        condicao.Condicao(k=9).identidade() != condicao.Condicao(k=15).identidade())
+confere("estrategia diferente -> identidade diferente",
+        condicao.Condicao(recuperacao="crua").identidade()
+        != condicao.Condicao(recuperacao="hyde").identidade())
+confere("modelo diferente -> identidade diferente",
+        condicao.Condicao(modelo="gpt-4o-mini").identidade() != condicao.PADRAO.identidade())
+confere("a identidade cabe num nome de pasta", len(condicao.PADRAO.identidade()) == 8)
+
+print("13) montar_consulta: cada estrategia monta a consulta a seu modo")
+TRADUCAO = {"tarefa": "sort", "tipos_de_dado": ["quantitative", "nominal"],
+            "descricao": "compare values across categories"}
+PERGUNTA = "quero comparar as vendas de 5 lojas"
+consulta = recomendar.montar_consulta(condicao.PADRAO, PERGUNTA, TRADUCAO, llm=None)
+confere("'traduzida' usa o formato dos documentos", consulta.startswith("task: sort\ndata types: "))
+confere("'crua' usa a pergunta como ela veio",
+        recomendar.montar_consulta(condicao.Condicao(recuperacao="crua"), PERGUNTA, TRADUCAO, None)
+        == PERGUNTA)
+confere("nem 'traduzida' nem 'crua' chamam o LLM (llm=None nao quebrou)", True)
+
+print("14) os dois prompts de geracao pedem o mesmo formato de resposta")
+CAMPOS = ('"grafico"', '"justificativa"', '"achados_usados"', '"vegalite_spec"', '"ressalva"')
+confere("a ablacao pede exatamente os mesmos campos da condicao padrao",
+        all(recomendar.PROMPT_RECOMENDACAO.count(c) == recomendar.PROMPT_SEM_ACHADOS.count(c) == 1
+            for c in CAMPOS))
+confere("o prompt com achados explica como ler os achados",
+        "result, best to worst" in recomendar.PROMPT_RECOMENDACAO)
+confere("o prompt da ablacao nao menciona achado nenhum",
+        "ACHADOS DE ESTUDOS" not in recomendar.PROMPT_SEM_ACHADOS)
+confere("os dois formatam sem sobrar chave de template",
+        "{{" not in recomendar.PROMPT_SEM_ACHADOS.format(pergunta="x")
+        and "{{" not in recomendar.PROMPT_RECOMENDACAO.format(pergunta="x", achados="y"))
 
 print("\nTUDO OK.")

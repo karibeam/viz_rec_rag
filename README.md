@@ -95,6 +95,7 @@ A tela segue as heurísticas de usabilidade de Nielsen, sem enfeites:
 
 ```
 src/
+  condicao.py       o que pode variar num experimento (estratégia, k, modelo)
   config.py         chave de API, modelos, nova tentativa em caso de erro temporário
   indexar.py        etapa offline: base → documentos → embeddings → Chroma
   recomendar.py     etapa online: traduzir → buscar → gerar
@@ -109,7 +110,8 @@ data/raw/           os 59 JSONs da base, intactos
 requirements.txt      dependências do projeto (faixas abertas)
 requirements.lock.txt versões exatas do ambiente em que o sistema foi validado
 tests/
-  teste_unidades.py     testa isoladamente validate_spec.py e os ajudantes de indexar.py
+  teste_unidades.py     testa isoladamente validate_spec.py, condicao.py e os
+                        ajudantes de indexar.py
   teste_offline.py      testa o pipeline inteiro sem gastar API
   comum.py              ajudante compartilhado pelos testes (OK/FALHA)
   comparar_v1_v2.py     compara esta versão com a v1 nas 18 perguntas
@@ -145,6 +147,34 @@ Ou pelo terminal:
 ```bash
 .venv/bin/python src/recomendar.py "quero comparar as vendas de 5 categorias"
 ```
+
+## Rodar outra condição
+
+Toda decisão que pode variar num experimento é **parâmetro, não constante**: a
+estratégia de recuperação, quantos achados buscar e qual modelo responde. A
+condição padrão é o sistema como ele é descrito acima; as outras existem para
+poder comparar em vez de só defender a escolhida.
+
+| `--recuperacao` | o que vai ao banco vetorial |
+|---|---|
+| `traduzida` *(padrão)* | o LLM traduz a pergunta para o vocabulário da base |
+| `crua` | a pergunta do usuário, exatamente como ela veio |
+| `hyde` | o LLM escreve um achado **hipotético**, e é ele que vira a consulta |
+| `nenhuma` | não busca nada: o LLM responde sem evidência — a ablação que isola o RAG |
+
+```bash
+.venv/bin/python src/recomendar.py --recuperacao nenhuma "quero comparar as vendas de 5 lojas"
+```
+
+```bash
+.venv/bin/python src/recomendar.py --recuperacao crua --k 15 "quero comparar as vendas de 5 lojas"
+```
+
+Nas quatro condições a pergunta é traduzida e a recusa fora de escopo continua
+valendo: só muda a consulta (ou a ausência dela). Isso mantém as condições
+comparáveis — a única diferença entre elas é a evidência, nunca o resto do
+pipeline. A condição usada volta dentro do resultado, em `r["condicao"]`, para
+que nenhum resultado fique sem saber como foi produzido.
 
 ## Testes
 

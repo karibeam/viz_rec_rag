@@ -26,7 +26,25 @@ def _require(var: str) -> str:
     return val
 
 
-def get_chat():
+GEMINI_PADRAO = "gemini-3.5-flash-lite"
+OPENAI_PADRAO = "gpt-4o-mini"
+
+
+def nome_do_chat(modelo: str | None = None) -> str:
+    """O id do modelo que get_chat(modelo) vai usar de fato.
+
+    A chave do cache depende desse nome, entao ele tem que ser resolvido aqui
+    e nao adivinhado: um experimento rodado com outro modelo nao pode reusar a
+    resposta guardada do anterior.
+    """
+    if modelo:
+        return modelo
+    if provider() == "openai":
+        return os.getenv("OPENAI_CHAT_MODEL", OPENAI_PADRAO)
+    return os.getenv("GEMINI_CHAT_MODEL", GEMINI_PADRAO)
+
+
+def get_chat(modelo: str | None = None):
     """Modelo de chat, pedindo temperatura 0 (resposta mais estavel possivel).
 
     ATENCAO: o gemini-3.5-flash-lite usa amostragem fixa e IGNORA esse pedido
@@ -39,7 +57,7 @@ def get_chat():
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+            model=nome_do_chat(modelo),
             temperature=0,
             api_key=_require("OPENAI_API_KEY"),
         )
@@ -47,7 +65,7 @@ def get_chat():
     from langchain_google_genai import ChatGoogleGenerativeAI
 
     return ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_CHAT_MODEL", "gemini-3.5-flash-lite"),
+        model=nome_do_chat(modelo),
         temperature=0,
         google_api_key=_require("GOOGLE_API_KEY"),
     )

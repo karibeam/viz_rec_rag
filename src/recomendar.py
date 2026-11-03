@@ -6,9 +6,17 @@ Passo 1. TRADUZIR a pergunta leiga para o vocabulario tecnico da base
 Passo 2. BUSCAR os k achados mais parecidos (similaridade de cosseno).
 Passo 3. GERAR: o LLM le os achados e recomenda UM grafico, citando as fontes.
 
+COMO a consulta do passo 2 e montada, QUANTOS achados ela traz e QUAL modelo
+responde sao parametros de uma Condicao (src/condicao.py), nao constantes:
+e isso que permite comparar estrategias em vez de so defender a atual.
+Chamar sem passar condicao roda a PADRAO, que e o sistema como ele e.
+
     python src/recomendar.py "quero comparar as vendas de 5 categorias"
+    python src/recomendar.py --recuperacao crua "quero comparar as vendas"
+    python src/recomendar.py --recuperacao nenhuma "..."   # ablacao: sem RAG
 """
 
+import argparse
 import difflib
 import json
 import re
@@ -16,11 +24,12 @@ import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 
+import condicao as cond_mod
 import config
 import validate_spec
 from indexar import TAREFAS, abrir_banco
 
-K = 9  # quantos achados recuperar (abaixo disso, um unico artigo tende a dominar)
+K = cond_mod.Condicao.k  # 9 achados: abaixo disso, um unico artigo tende a dominar
 
 
 # --- Passo 1: traduzir a pergunta -------------------------------------------
@@ -77,7 +86,41 @@ def consulta_tecnica(traducao):
     )
 
 
-# --- Passo 2: buscar ---------------------------------------------------------
+# --- Passo 2: montar a consulta e buscar ------------------------------------
+
+PROMPT_HYDE = """Escreva o resumo de um achado HIPOTETICO de um estudo experimental de
+percepcao de graficos que responderia a esta pergunta:
+
+"{pergunta}"
+
+Imite exatamente este formato, em ingles, sem comentar nada:
+task: <uma tarefa analitica>
+data types: <tipos de dado separados por virgula>
+metric: <accuracy ou time> (experimental)
+result, best to worst: <designs do melhor para o pior>
+designs compared:
+- E-1: mark <marca>; <tipo de dado> -> <canal visual>"""
+
+
+def achado_hipotetico(pergunta, llm):
+    """HyDE: o LLM inventa um achado plausivel, e ELE -- nao a pergunta -- vira a consulta.
+
+    A aposta do HyDE e que um texto falso no formato dos documentos cai mais
+    perto deles no espaco vetorial do que a pergunta verdadeira. E a
+    alternativa obvia a traducao, e por isso precisa ser medida, nao suposta.
+    """
+    resposta = config.com_retentativa(lambda: llm.invoke(PROMPT_HYDE.format(pergunta=pergunta)))
+    return config.texto(resposta).strip()
+
+
+def montar_consulta(cond, pergunta, traducao, llm):
+    """O texto que vai ao banco vetorial, conforme a estrategia da condicao."""
+    if cond.recuperacao == "crua":
+        return pergunta
+    if cond.recuperacao == "hyde":
+        return achado_hipotetico(pergunta, llm)
+    return consulta_tecnica(traducao)  # "traduzida"
+
 
 def buscar(consulta, banco, k=K):
     """Os k achados mais parecidos. No Chroma (cosseno): similaridade = 1 - distancia."""
@@ -86,6 +129,31 @@ def buscar(consulta, banco, k=K):
 
 # --- Passo 3: gerar a recomendacao ------------------------------------------
 
+COMO_LER_ACHADOS = """Como ler os achados: "result, best to worst" ordena os designs do melhor para
+o pior no estudo ('=' e empate). Cada design e descrito pela marca e pelo canal
+visual: mark area-rect = barras; line = linhas; point = pontos (dispersao);
+area-arc = pizza/rosca; area-circle = bolhas; text = tabela de texto;
+length/position = comprimento/posicao; angle = angulo; color-hue = cor."""
+
+# Os dois prompts de geracao compartilham o contrato de saida: numa ablacao, a
+# unica coisa que pode diferir entre as condicoes e a evidencia, nunca o
+# formato pedido. Os marcadores sao __MAIUSCULAS__ e nao chaves, para nao
+# colidirem com o str.format que insere a pergunta depois.
+FORMATO_RESPOSTA = """Responda so com JSON:
+{{
+  "grafico": "nome popular do grafico, em portugues",
+  "justificativa": "__JUSTIFICATIVA__",
+  "achados_usados": [__ACHADOS_USADOS__],
+  "vegalite_spec": {{ spec Vega-Lite v5 completa, com "$schema", "title", "data": {{"values": [4 a 8 linhas de exemplo coerentes com a pergunta]}}, "mark" e "encoding" com "type" em cada canal }},
+  "ressalva": "limitacao importante, ou \\"\\" se nao houver"
+}}"""
+
+
+def formato_resposta(justificativa, achados_usados=""):
+    return (FORMATO_RESPOSTA
+            .replace("__JUSTIFICATIVA__", justificativa)
+            .replace("__ACHADOS_USADOS__", achados_usados))
+
 PROMPT_RECOMENDACAO = """Voce ajuda pessoas que NAO sao especialistas a escolher um grafico.
 
 PERGUNTA: {pergunta}
@@ -93,25 +161,28 @@ PERGUNTA: {pergunta}
 ACHADOS DE ESTUDOS CIENTIFICOS (sua unica fonte de conhecimento):
 {achados}
 
-Como ler os achados: "result, best to worst" ordena os designs do melhor para
-o pior no estudo ('=' e empate). Cada design e descrito pela marca e pelo canal
-visual: mark area-rect = barras; line = linhas; point = pontos (dispersao);
-area-arc = pizza/rosca; area-circle = bolhas; text = tabela de texto;
-length/position = comprimento/posicao; angle = angulo; color-hue = cor.
+""" + COMO_LER_ACHADOS + """
 
 Recomende UM unico grafico, com base apenas nesses achados:
 - de preferencia os achados cuja "task" combina com a pergunta e com
   "statistically significant differences: yes";
 - se os achados discordarem, escolha o mais bem sustentado e diga por que.
 
-Responda so com JSON:
-{{
-  "grafico": "nome popular do grafico, em portugues",
-  "justificativa": "2 a 4 frases simples, citando os achados pelo numero (ex: 'o achado 2 mostrou que...'); nao use codigos de design como E-1 ou T-2, diga o nome do grafico",
-  "achados_usados": [numeros dos achados que sustentam a escolha],
-  "vegalite_spec": {{ spec Vega-Lite v5 completa, com "$schema", "title", "data": {{"values": [4 a 8 linhas de exemplo coerentes com a pergunta]}}, "mark" e "encoding" com "type" em cada canal }},
-  "ressalva": "limitacao importante, ou \\"\\" se nao houver"
-}}"""
+""" + formato_resposta(
+    "2 a 4 frases simples, citando os achados pelo numero (ex: 'o achado 2 mostrou que...'); "
+    "nao use codigos de design como E-1 ou T-2, diga o nome do grafico",
+    "numeros dos achados que sustentam a escolha",
+)
+
+# Ablacao (recuperacao="nenhuma"): mesmo pedido, sem evidencia nenhuma. Isola o
+# efeito do RAG -- o que sobra e o que o LLM sabe por conta propria.
+PROMPT_SEM_ACHADOS = """Voce ajuda pessoas que NAO sao especialistas a escolher um grafico.
+
+PERGUNTA: {pergunta}
+
+Recomende UM unico grafico.
+
+""" + formato_resposta("2 a 4 frases simples explicando a escolha")
 
 
 def referencia(fonte):
@@ -133,27 +204,32 @@ def formatar_achados(resultados):
     )
 
 
-def recomendar(pergunta, k=K, llm=None, banco=None):
-    llm = llm or config.get_chat()
-    banco = banco or abrir_banco()
+def recomendar(pergunta, cond=cond_mod.PADRAO, llm=None, banco=None):
+    llm = llm or config.get_chat(cond.modelo)
 
     # Passo 1
     traducao = traduzir_pergunta(pergunta, llm)
     if traducao.get("tarefa") == "nenhuma":
         return {
             "pergunta": pergunta,
+            "condicao": cond.como_dict(),
             "traducao": traducao,
             "fora_de_escopo": True,
             "mensagem": "Essa pergunta nao parece ser sobre qual grafico usar. "
                         "Descreva a analise que voce quer fazer com seus dados.",
         }
 
-    # Passo 2
-    consulta = consulta_tecnica(traducao)
-    resultados = buscar(consulta, banco, k)
+    # Passo 2 -- a ablacao salta a busca inteira (nem abre o banco vetorial)
+    if cond.recuperacao == "nenhuma":
+        consulta, resultados = "", []
+        prompt = PROMPT_SEM_ACHADOS.format(pergunta=pergunta)
+    else:
+        banco = banco or abrir_banco()
+        consulta = montar_consulta(cond, pergunta, traducao, llm)
+        resultados = buscar(consulta, banco, cond.k)
+        prompt = PROMPT_RECOMENDACAO.format(pergunta=pergunta, achados=formatar_achados(resultados))
 
     # Passo 3
-    prompt = PROMPT_RECOMENDACAO.format(pergunta=pergunta, achados=formatar_achados(resultados))
     resposta = ler_json(config.texto(config.com_retentativa(lambda: llm.invoke(prompt))))
 
     spec = resposta.get("vegalite_spec")
@@ -164,6 +240,7 @@ def recomendar(pergunta, k=K, llm=None, banco=None):
     usados = [n for n in resposta.get("achados_usados") or [] if isinstance(n, int) and 1 <= n <= len(resultados)]
     return {
         "pergunta": pergunta,
+        "condicao": cond.como_dict(),
         "traducao": traducao,
         "consulta": consulta,
         "grafico": resposta.get("grafico", ""),
@@ -189,18 +266,38 @@ def ler_json(texto):
     return json.loads(texto[inicio : fim + 1])
 
 
-if __name__ == "__main__":
-    r = recomendar(" ".join(sys.argv[1:]) or "quero comparar as vendas de 5 categorias de produto")
-    print(f"\nPERGUNTA: {r['pergunta']}")
+def argumentos(argv=None):
+    p = argparse.ArgumentParser(description="Recomenda um grafico para uma pergunta em linguagem comum.")
+    p.add_argument("pergunta", nargs="*", help="a pergunta, em linguagem comum")
+    p.add_argument("--recuperacao", default="traduzida", choices=cond_mod.RECUPERACAO,
+                   help="como montar a consulta ao banco vetorial (padrao: traduzida)")
+    p.add_argument("--k", type=int, default=K, help=f"quantos achados recuperar (padrao: {K})")
+    p.add_argument("--modelo", default=None, help="id do modelo de chat (padrao: o do .env)")
+    return p.parse_args(argv)
+
+
+def main(argv=None):
+    a = argumentos(argv)
+    cond = cond_mod.Condicao(nome="linha-de-comando", recuperacao=a.recuperacao, k=a.k, modelo=a.modelo)
+    pergunta = " ".join(a.pergunta) or "quero comparar as vendas de 5 categorias de produto"
+
+    r = recomendar(pergunta, cond)
+    print(f"\nCONDICAO: {cond}")
+    print(f"PERGUNTA: {r['pergunta']}")
     print(f"TRADUCAO: tarefa={r['traducao'].get('tarefa')} | dados={r['traducao'].get('tipos_de_dado')}")
     if r.get("fora_de_escopo"):
         print(f"\n{r['mensagem']}")
-    else:
-        print(f"\nRECOMENDACAO: {r['grafico']}")
-        print(f"  {r['justificativa']}")
-        if r["ressalva"]:
-            print(f"  ressalva: {r['ressalva']}")
-        print(f"  fontes: {', '.join(r['fontes'])}")
+        return
+    print(f"\nRECOMENDACAO: {r['grafico']}")
+    print(f"  {r['justificativa']}")
+    if r["ressalva"]:
+        print(f"  ressalva: {r['ressalva']}")
+    print(f"  fontes: {', '.join(r['fontes']) or '(nenhuma: condicao sem recuperacao)'}")
+    if r["achados"]:
         print("\nACHADOS RECUPERADOS:")
         for a in r["achados"]:
             print(f"  [{a['n']}] {a['similaridade']:.3f}  {a['fonte']}")
+
+
+if __name__ == "__main__":
+    main()
