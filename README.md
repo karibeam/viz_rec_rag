@@ -193,7 +193,7 @@ Para reproduzir o ambiente exato em que foram validados:
 ## Versão anterior (v1)
 
 A primeira versão está guardada na branch
-[`v1-cards-placar`](https://github.com/karibeam/Viz_rec_rag/tree/v1-cards-placar).
+[`v1-cards-placar`](https://github.com/karibeam/viz_rec_rag/tree/v1-cards-placar).
 Ela resolvia o gap pelo outro lado: um LLM reescrevia os 240 achados em "cards" com
 linguagem leiga, e um placar em Python decidia o gráfico. Funcionava, mas exigia
 várias camadas extras (pesos, amortecimento por artigo, piso de escopo). A v2 troca
