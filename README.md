@@ -190,11 +190,17 @@ Para reproduzir o ambiente exato em que foram validados:
 - **Referências.** Os JSONs da base trazem só o título; autor e ano vêm do nome do
   arquivo (`Saket2018task.json` → "Saket (2018)"), sem os coautores.
 
-## Versão anterior (v1)
+## Estratégias anteriores
 
-A primeira versão está guardada na branch
-[`v1-cards-placar`](https://github.com/karibeam/viz_rec_rag/tree/v1-cards-placar).
-Ela resolvia o gap pelo outro lado: um LLM reescrevia os 240 achados em "cards" com
-linguagem leiga, e um placar em Python decidia o gráfico. Funcionava, mas exigia
-várias camadas extras (pesos, amortecimento por artigo, piso de escopo). A v2 troca
-isso por um passo só: traduzir a pergunta.
+O histórico é uma linha só, e cada estratégia abandonada está marcada por uma tag
+anotada que explica por que foi trocada. A linha do tempo completa:
+
+```bash
+git tag -n --sort='*committerdate'
+```
+
+| tag | estratégia |
+|---|---|
+| [`placar-deterministico`](https://github.com/karibeam/viz_rec_rag/tree/placar-deterministico) | a decisão sai do LLM: os achados recuperados votam nos designs num placar em Python, com pesos e amortecimento por artigo. Auditável linha a linha, mas cada caso novo pedia mais um parâmetro de ajuste. |
+| [`v1-cards-placar`](https://github.com/karibeam/viz_rec_rag/tree/v1-cards-placar) | a v1 completa: fechava o gap semântico pelo outro lado — um LLM reescrevia os 240 achados em "cards" de linguagem leiga **antes de indexar**, e o placar decidia. Funcionava, mas exigia várias camadas de ajuste (pesos, amortecimento, piso de escopo) e deixava a base dependente de uma reescrita por LLM. |
+| [`v2.0-entrega`](https://github.com/karibeam/viz_rec_rag/tree/v2.0-entrega) | a versão atual: traduz **a pergunta** para o vocabulário da base, em um passo, e mantém os artigos intactos. |

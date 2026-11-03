@@ -11,7 +11,7 @@
 > A v2 — o sistema que esta neste repositorio — faz o contrario: traduz **a
 > pergunta** para o vocabulario da base, em um passo, e mantem os artigos
 > intactos. A arquitetura atual esta no [README](../../README.md); a v1 esta
-> guardada na branch `v1-cards-placar`.
+> guardada na tag `v1-cards-placar`.
 >
 > Guardado aqui porque documenta por que a arquitetura atual e assim.
 
