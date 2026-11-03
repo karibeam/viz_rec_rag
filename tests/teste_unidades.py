@@ -9,7 +9,10 @@ Nao chama nenhuma API e nao toca no banco vetorial.
     .venv/bin/python tests/teste_unidades.py
 """
 
+import json
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -18,7 +21,11 @@ from comum import caminho_src, confere
 
 caminho_src()
 
+from langchain_core.messages import AIMessage
+
+import cache
 import condicao
+import config
 import indexar
 import recomendar
 import validate_spec
@@ -237,5 +244,104 @@ confere("o prompt da ablacao nao menciona achado nenhum",
 confere("os dois formatam sem sobrar chave de template",
         "{{" not in recomendar.PROMPT_SEM_ACHADOS.format(pergunta="x")
         and "{{" not in recomendar.PROMPT_RECOMENDACAO.format(pergunta="x", achados="y"))
+
+# --- cache: reproduzir uma execucao sem chamar a API ------------------------
+
+print("15) cache: a chave distingue modelo, prompt e repeticao")
+confere("prompts diferentes -> chaves diferentes",
+        cache.chave("m", "a") != cache.chave("m", "b"))
+confere("modelos diferentes -> chaves diferentes",
+        cache.chave("m1", "a") != cache.chave("m2", "a"))
+confere("REPETICOES diferentes -> chaves diferentes (senao a variacao medida seria zero)",
+        cache.chave("m", "a", 1) != cache.chave("m", "a", 2))
+confere("a mesma chamada -> sempre a mesma chave",
+        cache.chave("m", "a", 3) == cache.chave("m", "a", 3))
+
+PASTA = Path(tempfile.mkdtemp())
+
+print("16) cache: grava, le e guarda o prompt junto")
+confere("chamada que nunca aconteceu devolve None",
+        cache.ler("m", "nunca perguntei", pasta=PASTA) is None)
+arquivo = cache.gravar("m", "PROMPT", "RESPOSTA", pasta=PASTA)
+confere("a resposta volta igual", cache.ler("m", "PROMPT", pasta=PASTA) == "RESPOSTA")
+guardado = json.loads(arquivo.read_text(encoding="utf-8"))
+confere("o prompt inteiro fica no arquivo (sem ele nao da para auditar)",
+        guardado["prompt"] == "PROMPT" and guardado["modelo"] == "m")
+confere("nao sobra arquivo parcial", list(PASTA.glob("*.parcial")) == [])
+arquivo.write_text("{isso nao e json", encoding="utf-8")
+confere("arquivo corrompido e tratado como ausente, nao quebra",
+        cache.ler("m", "PROMPT", pasta=PASTA) is None)
+
+print("17) ChatComCache: a segunda vez nao chama o modelo")
+chamadas = []
+
+
+class LlmQueConta:
+    """Modelo falso que registra cada chamada recebida."""
+
+    def invoke(self, prompt):
+        chamadas.append(prompt)
+        return AIMessage(content=f"resposta {len(chamadas)}")
+
+
+com_cache = cache.ChatComCache(LlmQueConta(), "modelo-de-teste", pasta=PASTA)
+primeira = config.texto(com_cache.invoke("PERGUNTA"))
+segunda = config.texto(com_cache.invoke("PERGUNTA"))
+confere("o modelo foi chamado uma vez so", len(chamadas) == 1)
+confere("as duas respostas sao iguais", primeira == segunda == "resposta 1")
+confere("contou 1 falta e 1 acerto", (com_cache.faltas, com_cache.acertos) == (1, 1))
+
+outra_repeticao = cache.ChatComCache(LlmQueConta(), "modelo-de-teste", repeticao=2, pasta=PASTA)
+outra_repeticao.invoke("PERGUNTA")
+confere("a repeticao 2 da MESMA pergunta chama o modelo de novo", len(chamadas) == 2)
+confere("e a repeticao 1 continua guardada separada",
+        cache.ler("modelo-de-teste", "PERGUNTA", 1, PASTA) == "resposta 1")
+
+print("18) EmbeddingsComCache: vetoriza so o que falta")
+lotes, consultas = [], []
+
+
+class EmbeddingsQueContam:
+    """Modelo falso que registra o que recebeu por cada caminho.
+
+    Consulta e documento devolvem vetores DIFERENTES de proposito: e assim que
+    o provedor real se comporta (task_type RETRIEVAL_QUERY x RETRIEVAL_DOCUMENT),
+    e e o que o teste abaixo precisa distinguir.
+    """
+
+    def embed_documents(self, textos):
+        lotes.append(list(textos))
+        return [[float(len(t)), 1.0] for t in textos]
+
+    def embed_query(self, texto):
+        consultas.append(texto)
+        return [float(len(texto)), 2.0]
+
+
+emb = cache.EmbeddingsComCache(EmbeddingsQueContam(), "emb-de-teste", pasta=PASTA)
+
+confere("consulta passa pelo embed_query do provedor, nao pelo embed_documents",
+        emb.embed_query("abc") == [3.0, 2.0] and consultas == ["abc"] and lotes == [])
+confere("a segunda consulta igual nao chama a API",
+        emb.embed_query("abc") == [3.0, 2.0] and len(consultas) == 1)
+confere("o MESMO texto como documento tem outro vetor, e nao reusa o da consulta",
+        emb.embed_documents(["abc"]) == [[3.0, 1.0]] and lotes == [["abc"]])
+
+emb.embed_documents(["abc", "de", "f"])
+confere("num lote, so os textos que faltam sao enviados", lotes[-1] == ["de", "f"])
+confere("e o lote volta na ordem certa e completo",
+        emb.embed_documents(["abc", "de", "f"]) == [[3.0, 1.0], [2.0, 1.0], [1.0, 1.0]])
+confere("contou acertos e faltas", (emb.acertos, emb.faltas) == (1 + 1 + 3, 1 + 1 + 2))
+confere("modelo diferente nao reusa o vetor do outro",
+        cache.EmbeddingsComCache(EmbeddingsQueContam(), "outro-emb", pasta=PASTA)
+        ._guardado("abc", "documento") is None)
+
+print("19) cache.resumo: conta o que esta guardado")
+por_modelo, bytes_totais = cache.resumo(PASTA)
+confere("conta as chamadas do modelo de teste", por_modelo.get("modelo-de-teste") == 2)
+confere("soma algum tamanho", bytes_totais > 0)
+confere("pasta inexistente nao quebra o resumo", cache.resumo(PASTA / "nao-existe") == ({}, 0))
+
+shutil.rmtree(PASTA, ignore_errors=True)
 
 print("\nTUDO OK.")

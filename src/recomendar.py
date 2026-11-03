@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 
+import cache as cache_mod
 import condicao as cond_mod
 import config
 import validate_spec
@@ -205,7 +206,9 @@ def formatar_achados(resultados):
 
 
 def recomendar(pergunta, cond=cond_mod.PADRAO, llm=None, banco=None):
-    llm = llm or config.get_chat(cond.modelo)
+    # Sem llm explicito, usa o modelo da condicao COM cache em disco: a mesma
+    # pergunta na mesma condicao devolve a mesma resposta e nao gasta chamada.
+    llm = llm or cache_mod.chat(cond)
 
     # Passo 1
     traducao = traduzir_pergunta(pergunta, llm)
@@ -224,7 +227,7 @@ def recomendar(pergunta, cond=cond_mod.PADRAO, llm=None, banco=None):
         consulta, resultados = "", []
         prompt = PROMPT_SEM_ACHADOS.format(pergunta=pergunta)
     else:
-        banco = banco or abrir_banco()
+        banco = banco or abrir_banco(cache_mod.embeddings())
         consulta = montar_consulta(cond, pergunta, traducao, llm)
         resultados = buscar(consulta, banco, cond.k)
         prompt = PROMPT_RECOMENDACAO.format(pergunta=pergunta, achados=formatar_achados(resultados))
@@ -273,6 +276,10 @@ def argumentos(argv=None):
                    help="como montar a consulta ao banco vetorial (padrao: traduzida)")
     p.add_argument("--k", type=int, default=K, help=f"quantos achados recuperar (padrao: {K})")
     p.add_argument("--modelo", default=None, help="id do modelo de chat (padrao: o do .env)")
+    p.add_argument("--sem-cache", action="store_true",
+                   help="ignora o cache em disco e chama o modelo de novo")
+    p.add_argument("--repeticao", type=int, default=1,
+                   help="numero desta repeticao; entra na chave do cache (padrao: 1)")
     return p.parse_args(argv)
 
 
@@ -281,8 +288,11 @@ def main(argv=None):
     cond = cond_mod.Condicao(nome="linha-de-comando", recuperacao=a.recuperacao, k=a.k, modelo=a.modelo)
     pergunta = " ".join(a.pergunta) or "quero comparar as vendas de 5 categorias de produto"
 
-    r = recomendar(pergunta, cond)
+    llm = cache_mod.chat(cond, repeticao=a.repeticao, ativo=not a.sem_cache)
+    r = recomendar(pergunta, cond, llm=llm)
     print(f"\nCONDICAO: {cond}")
+    if isinstance(llm, cache_mod.ChatComCache):
+        print(f"({llm}, repeticao {a.repeticao})")
     print(f"PERGUNTA: {r['pergunta']}")
     print(f"TRADUCAO: tarefa={r['traducao'].get('tarefa')} | dados={r['traducao'].get('tipos_de_dado')}")
     if r.get("fora_de_escopo"):

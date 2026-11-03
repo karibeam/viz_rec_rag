@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "data" / "raw"        # os 59 JSONs da base, intactos
 CHROMA_DIR = ROOT / "data" / "chroma"  # o banco vetorial
+CACHE_DIR = ROOT / "data" / "cache"    # respostas do LLM, para reproduzir execucoes
+RUNS_DIR = ROOT / "runs"               # diario de cada execucao (uma pasta por execucao)
 COLLECTION = "achados"
 
 load_dotenv(ROOT / ".env")
@@ -71,20 +73,33 @@ def get_chat(modelo: str | None = None):
     )
 
 
+GEMINI_EMBED_PADRAO = "models/gemini-embedding-001"
+OPENAI_EMBED_PADRAO = "text-embedding-3-small"
+
+
+def nome_do_embedding(modelo: str | None = None) -> str:
+    """O id do modelo de embeddings que get_embeddings() vai usar de fato."""
+    if modelo:
+        return modelo
+    if provider() == "openai":
+        return os.getenv("OPENAI_EMBED_MODEL", OPENAI_EMBED_PADRAO)
+    return os.getenv("GEMINI_EMBED_MODEL", GEMINI_EMBED_PADRAO)
+
+
 def get_embeddings():
     """Modelo de embeddings (os dois provedores sao multilingues)."""
     if provider() == "openai":
         from langchain_openai import OpenAIEmbeddings
 
         return OpenAIEmbeddings(
-            model=os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
+            model=nome_do_embedding(),
             api_key=_require("OPENAI_API_KEY"),
         )
 
     from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
     return GoogleGenerativeAIEmbeddings(
-        model=os.getenv("GEMINI_EMBED_MODEL", "models/gemini-embedding-001"),
+        model=nome_do_embedding(),
         google_api_key=_require("GOOGLE_API_KEY"),
     )
 

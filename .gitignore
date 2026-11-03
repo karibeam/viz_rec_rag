@@ -6,3 +6,5 @@ data/chroma/
 
 # Configuracao local do servidor de desenvolvimento (nao e do projeto)
 .claude/launch.json
+data/cache/
+runs/

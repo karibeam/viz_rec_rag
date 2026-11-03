@@ -95,6 +95,7 @@ A tela segue as heurísticas de usabilidade de Nielsen, sem enfeites:
 
 ```
 src/
+  cache.py          respostas do LLM e vetores guardados em disco
   condicao.py       o que pode variar num experimento (estratégia, k, modelo)
   config.py         chave de API, modelos, nova tentativa em caso de erro temporário
   indexar.py        etapa offline: base → documentos → embeddings → Chroma
@@ -107,6 +108,8 @@ docs/pipeline.svg   diagrama do pipeline
 docs/historico/     plano da v1, superado — documenta por que a v2 é assim
 .streamlit/         tema da interface (cor principal, barra de ferramentas mínima)
 data/raw/           os 59 JSONs da base, intactos
+data/cache/         respostas do LLM e embeddings guardados (fora do git)
+runs/               diário de cada execução (fora do git)
 requirements.txt      dependências do projeto (faixas abertas)
 requirements.lock.txt versões exatas do ambiente em que o sistema foi validado
 tests/
@@ -176,6 +179,35 @@ comparáveis — a única diferença entre elas é a evidência, nunca o resto d
 pipeline. A condição usada volta dentro do resultado, em `r["condicao"]`, para
 que nenhum resultado fique sem saber como foi produzido.
 
+## Reproduzir uma execução
+
+O modelo ignora `temperature` e não aceita semente, então **não há como pedir
+determinismo a ele** — o determinismo vem de guardar a resposta de cada prompt
+em disco. Uma execução já feita é reproduzida sem gastar chamada e sem variação
+nova: na prática, dá para re-rodar um experimento inteiro offline.
+
+```bash
+.venv/bin/python src/cache.py
+```
+
+A chave de cada chamada inclui o modelo, o prompt **e o número da repetição**.
+A repetição está na chave de propósito: medir a variação do sistema exige rodar
+a mesma pergunta *n* vezes, e se a chave fosse só (modelo, prompt) a repetição 2
+leria a resposta da repetição 1 — a variação medida seria zero, e o experimento
+estaria errado sem dar nenhum sinal.
+
+```bash
+.venv/bin/python src/recomendar.py --repeticao 2 "quero comparar as vendas de 5 lojas"
+```
+
+```bash
+.venv/bin/python src/recomendar.py --sem-cache "quero comparar as vendas de 5 lojas"
+```
+
+Os vetores também são guardados, separados por papel: o provedor vetoriza
+consulta e documento com `task_type` diferente, então o mesmo texto tem dois
+vetores distintos e trocá-los muda os achados recuperados.
+
 ## Testes
 
 Nenhum dos dois gasta chamada de API — dá para conferir o sistema sem chave:
@@ -216,7 +248,10 @@ Para reproduzir o ambiente exato em que foram validados:
   pergunta pode receber recomendações diferentes em execuções diferentes,
   principalmente quando a base cobre mal o caso. Trocar para um provedor que
   respeite a temperatura (`LLM_PROVIDER=openai`) reduz a variação, mas o passo de
-  geração continua sendo amostragem — não um cálculo.
+  geração continua sendo amostragem — não um cálculo. O cache em disco contorna
+  isso para *repetir* uma execução (a mesma pergunta na mesma condição devolve a
+  mesma resposta), mas não torna o modelo determinístico: a primeira resposta
+  de cada pergunta continua sendo uma amostra.
 - **Referências.** Os JSONs da base trazem só o título; autor e ano vêm do nome do
   arquivo (`Saket2018task.json` → "Saket (2018)"), sem os coautores.
 
